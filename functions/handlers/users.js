@@ -10,8 +10,44 @@ const {
 } = require("../utility/validators");
 
 
+exports.patchUser = (req, res) => {
+    const updates = req.body.updates
+    console.warn('updates',updates)
+    db.collection("users")
+      .doc(`${req.user.username}`)
+      .update(updates)
+      .then(doc => {
+        return res.json({
+          message: `document updated successfully`
+        });
+      })
+      .catch(error => {
+        console.error(error);
+        return res.status(500).json({ error: `something went wrong` });
+      });
+}
 
-exports.reset = (req, res) => {
+exports.getUser = (req, res) => {
+  db.doc(`users/${req.user.username}`)
+    .get()
+    .then(doc => {
+      console.log(req.user.username);
+      console.log("doc", doc);
+      if (doc.exists) {
+        console.log("Document data:", doc.data());
+        return res.status(200).json(doc.data());
+      } else {
+        // doc.data() will be undefined in this case
+        console.log("No such document!");
+      }
+      return null;
+    })
+    .catch(error => {
+      console.log("Error getting document:", error);
+    });
+};
+
+exports.resetPassword = (req, res) => {
     const emailAddress = req.body.email;
     const { valid, errors } = validateReset(emailAddress);
     if (!valid) return res.status(400).json(errors);
@@ -19,37 +55,24 @@ exports.reset = (req, res) => {
     firebase.auth().sendPasswordResetEmail(`${emailAddress}`);
     return res.json({ message: `Password reset email for ${emailAddress} sent` });
 }
-exports.logOut = (req, res) => {
-    firebase
-      .auth()
-      .signOut()
-      .then(() => {
-        return res.json({
-          message: `Logged Out`
-        });
-      })
-      .catch(error => {
-          return res.status(500).json({ error: error });
-
-      });
-}
 
 exports.signUp = (req, res) => {
+
     const newUser = {
         email: req.body.email,
         password: req.body.password,
         confirmPassword: req.body.confirmPassword,
-        handle: req.body.handle
+        username: req.body.username
     }
 
     const {valid, errors} = validateSignupData(newUser)
     if(!valid) return res.status(400).json(errors)
 
     let token, userId;
-    db.doc(`/users/${newUser.handle}`).get()
+    db.doc(`/users/${newUser.username}`).get()
         .then(doc => {
             if (doc.exists) {
-                return res.status(400).json({ handle: 'this handle is already taken' })
+                return res.status(400).json({ username: 'this username is already taken' })
             } else {
                 return firebase.auth().createUserWithEmailAndPassword(newUser.email, newUser.password)
             }
@@ -60,20 +83,25 @@ exports.signUp = (req, res) => {
         })
         .then(idToken => {
             token = idToken
-            const userCredentials = {
+            const userTemplate = {
                 userId,
-                handle: newUser.handle,
+                username: newUser.username,
                 email: newUser.email,
                 createdAt: new Date().toISOString(),
-            }
-            return db.doc(`/users/${newUser.handle}`).set(userCredentials)
+                totalActionsCompleted: 0,
+                objectivesCompleted: 0,
+
+            };
+            return db.doc(`/users/${newUser.username}`).set(userTemplate)
         })
         .then(() => {
-            return res.status(201).json({ token })
+            return res.status(200).json({ token })
         })
         .catch((error) => {
             if (error.code === 'auth/email-already-in-use') {
                 return res.status(400).json({ email: 'Email already in use' })
+            } else if (error.code === 'auth/weak-password') {
+                return res.status(400).json({ password: 'Stronger password required' })
             } else {
                 return res.status(500).json({ error: error.code })
             }
@@ -82,6 +110,7 @@ exports.signUp = (req, res) => {
 }
 
 exports.logIn = (req, res) => {
+
     const user = {
         email: req.body.email,
         password: req.body.password
@@ -96,7 +125,7 @@ exports.logIn = (req, res) => {
             return data.user.getIdToken()
         })
         .then(token => {
-            return res.json({ token })
+            return res.status(200).json({ token })
         })
         .catch((error) => {
             switch (error.code) {
